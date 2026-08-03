@@ -3363,7 +3363,7 @@ button:hover {
         // 多个代理备选列表（自动切换）
         // ⭐ 优先使用当前站点的本地代理，其次是自定义域名代理
         const CORS_PROXIES = [
-            '/',                                                        // ✅ 本地 Page Functions 代理（首选）
+            '/proxy',                                                        // ✅ 本地 Page Functions 代理（首选）
         ];
         
         let currentProxyIndex = 0; // 当前使用的代理索引
