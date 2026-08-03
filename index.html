@@ -272,11 +272,24 @@ button:hover {
         </p>
     </div>
 </div>
-<script>
 
-  var vConsole = null;
-</script>
-
+    <script>
+        
+          var vConsole = null;
+        function updateTime() {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            const timeStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+            document.getElementById('currentTime').textContent = `📅 ${timeStr}`;
+        }
+        updateTime();
+        setInterval(updateTime, 1000);
+    </script>
     <script>
 
         // ⭐ Unipus 接口定义（100%成功率）
