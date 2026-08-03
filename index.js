@@ -3,74 +3,82 @@ export default {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
-    // 1. 静态资源和本站关键路径绕过（交由 Workers Assets 原生处理）
-    const isStaticAsset =
-      pathname === "/" ||
-      pathname === "/index.html" ||
-      pathname === "/logo.ico" ||
-      pathname === "/logo.gif" ||
-      pathname === "/_headers" ||
-      pathname === "/wrangler.toml" ||
-      pathname === "/wrangler.json";
-
-    if (isStaticAsset) {
-      // 在 Workers Assets 中，如果不是由脚本处理，会自动尝试匹配静态资源
-      // 我们这里返回 undefined 让 Workers 继续查找资产
-      return env.ASSETS.fetch(request);
-    }
-
-    // 2. 获取目标 URL
-    let targetUrl = url.searchParams.get("url");
-
-    if (!targetUrl) {
-      // 尝试从路径中直接解析目标 URL (例如 /https://example.com)
-      const candidate = pathname.startsWith("/") ? pathname.slice(1) : pathname;
-
-      // 如果路径以 http 开头，说明它是一个待代理的 URL
-      if (candidate.startsWith("http")) {
-        // 拼接上原始请求的查询参数（如果有）
-        targetUrl = decodeURIComponent(candidate) + url.search;
-      }
-    }
-
-    // 3. 处理 OPTIONS 预检请求
+    // 1. 处理 OPTIONS 预检请求
     if (request.method === "OPTIONS") {
       return handleCORS();
     }
 
-    // 4. 如果仍未找到有效的代理目标，尝试交给静态资源处理
+    // 2. 优先获取代理目标 URL
+    let targetUrl = url.searchParams.get("url");
+
+    // 支持路径代理形式：/https://example.com
+    if (!targetUrl) {
+      const candidate = pathname.startsWith("/") ? pathname.slice(1) : pathname;
+
+      if (candidate.startsWith("http")) {
+        targetUrl = decodeURIComponent(candidate) + url.search;
+      }
+    }
+
+    // 3. 非代理请求才走静态资源
+    const isStaticAsset =
+      !targetUrl &&
+      (
+        pathname === "/" ||
+        pathname === "/index.html" ||
+        pathname === "/logo.ico" ||
+        pathname === "/logo.gif" ||
+        pathname === "/logo.png" ||
+        pathname === "/_headers" ||
+        pathname === "/wrangler.toml" ||
+        pathname === "/wrangler.json"
+      );
+
+    if (isStaticAsset) {
+      return env.ASSETS.fetch(request);
+    }
+
+    // 4. 没有代理目标时，交给静态资源
     if (!targetUrl) {
       return env.ASSETS.fetch(request);
     }
 
     try {
-      // 解码并规范化目标 URL
       const decodedUrl = targetUrl.startsWith("http")
         ? targetUrl
         : decodeURIComponent(targetUrl);
 
-      // 构建代理请求选项
       const proxyRequestInit = {
         method: request.method,
         headers: {},
         redirect: "follow",
       };
 
-      // 复制请求头（排除 Host 等敏感或受限头）
-      const excludeHeaders = ["host", "origin", "referer", "cookie"];
+      const excludeHeaders = [
+        "host",
+        "origin",
+        "referer",
+        "cookie",
+        "cf-connecting-ip",
+        "cf-ipcountry",
+        "cf-ray",
+        "cf-visitor",
+        "x-forwarded-for",
+        "x-forwarded-proto",
+      ];
+
       for (const [key, value] of request.headers) {
         const lowerKey = key.toLowerCase();
+
         if (!excludeHeaders.includes(lowerKey)) {
           proxyRequestInit.headers[key] = value;
         }
       }
 
-      // 处理请求体（仅限有 Body 的方法）
-      if (["POST", "PUT", "PATCH"].includes(request.method)) {
-        proxyRequestInit.body = await request.text();
+      if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method)) {
+        proxyRequestInit.body = await request.arrayBuffer();
       }
 
-      // 发起代理请求（添加 10 秒超时控制）
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
 
@@ -79,9 +87,9 @@ export default {
           ...proxyRequestInit,
           signal: controller.signal,
         });
+
         clearTimeout(timeoutId);
 
-        // 复制原始响应头并添加跨域所需的 CORS 头
         const responseHeaders = new Headers(response.headers);
         const corsHeaders = getCORSHeaders();
 
@@ -89,12 +97,10 @@ export default {
           responseHeaders.set(key, value);
         }
 
-        // 禁止响应被强缓存
         responseHeaders.set("Cache-Control", "no-store, no-cache, must-revalidate");
         responseHeaders.set("Pragma", "no-cache");
         responseHeaders.set("Expires", "0");
 
-        // 返回代理后的响应
         return new Response(response.body, {
           status: response.status,
           statusText: response.statusText,
@@ -102,12 +108,14 @@ export default {
         });
       } catch (fetchError) {
         clearTimeout(timeoutId);
+
         if (fetchError.name === "AbortError") {
           return new Response("代理请求超时", {
             status: 504,
             headers: getCORSHeaders(),
           });
         }
+
         throw fetchError;
       }
     } catch (error) {
